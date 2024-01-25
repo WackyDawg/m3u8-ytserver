@@ -1,6 +1,7 @@
 const express = require('express')
 const fetch = require('node-fetch')
-
+const cors = require('cors')
+const helmet = require('helmet')
 const cache = require('./cache')
 
 const app = express()
@@ -42,6 +43,8 @@ const getLiveStream = async (url) => {
 }
 
 app.use(require('express-status-monitor')())
+app.use(cors());
+app.use(helmet());
 
 app.get('/', (req, res, nxt) => {
   try {
@@ -100,6 +103,7 @@ app.get('/cache', async (req, res, nxt) => {
 })
 
 const port = process.env.PORT || 8080
+
 
 app.listen(port, () => {
   console.log(`express app (node ${process.version}) is running on port ${port}`)
