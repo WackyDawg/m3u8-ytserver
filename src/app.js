@@ -67,7 +67,7 @@ app.get('/channel/:id.m3u8', async (req, res, nxt) => {
   } catch (err) { nxt(err) }
 })
 
-app.get('/video/:id.m3u8', async (req, res, nxt) => {
+app.get('/live/:id.m3u8', async (req, res, nxt) => {
   try {
     const url = `https://www.youtube.com/watch?v=${req.params.id}`
     const { stream } = await getLiveStream(url)
