@@ -3,6 +3,7 @@ const fetch = require('node-fetch')
 const cors = require('cors')
 const helmet = require('helmet')
 const cache = require('./cache')
+const compression = require('compression')
 
 const app = express()
 
@@ -42,9 +43,20 @@ const getLiveStream = async (url) => {
   }
 }
 
+
+
+// middlewares
 app.use(require('express-status-monitor')())
 app.use(cors());
 app.use(helmet());
+app.use(compression());
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ error: 'Internal Server Error' });
+});
+
+
+
 
 app.get('/', (req, res, nxt) => {
   try {
@@ -54,7 +66,8 @@ app.get('/', (req, res, nxt) => {
   }
 })
 
-app.get('/channel/:id.m3u8', async (req, res, nxt) => {
+
+app.get('/channel/:id.m3u8',cors(), async (req, res, nxt) => {
   try {
     const url = `https://www.youtube.com/channel/${req.params.id}/live`
     const { stream } = await getLiveStream(url)
@@ -67,7 +80,7 @@ app.get('/channel/:id.m3u8', async (req, res, nxt) => {
   } catch (err) { nxt(err) }
 })
 
-app.get('/live/:id.m3u8', async (req, res, nxt) => {
+app.get('/live/:id.m3u8',cors(), async (req, res, nxt) => {
   try {
     const url = `https://www.youtube.com/watch?v=${req.params.id}`
     const { stream } = await getLiveStream(url)
@@ -80,7 +93,7 @@ app.get('/live/:id.m3u8', async (req, res, nxt) => {
   } catch (err) { nxt(err) }
 })
 
-app.get('/cache', async (req, res, nxt) => {
+app.get('/cache',cors(), async (req, res, nxt) => {
   try {
     const keys = await cache?.keys('*')
 
