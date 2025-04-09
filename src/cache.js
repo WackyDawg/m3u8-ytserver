@@ -1,4 +1,5 @@
-const NodeCache = require("node-cache");
+import NodeCache from 'node-cache';
+
 const cache = new NodeCache();
 
-module.exports = cache;
+export default cache;

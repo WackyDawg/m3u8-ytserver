@@ -1,0 +1,14 @@
+{
+  "bbc-news": {
+    "name": "BBC News",
+    "id": "UC16niRr50-MSBwiO3YDb3RA",
+    "type": "channel",
+    "logo": "https://logo.clearbit.com/bbc.com"
+  },
+  "sky-news-live": {
+    "name": "Sky News Live",
+    "id": "y7_EY4S90b0",
+    "type": "video",
+    "logo": "https://logo.clearbit.com/skynews.com"
+  }
+}
