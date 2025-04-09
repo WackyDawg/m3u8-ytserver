@@ -9,13 +9,14 @@ import morgan from 'morgan';
 import fs from 'fs/promises';
 import { fileURLToPath } from 'url';
 import path from 'path';
+import { pipeline } from 'stream';
+import https from 'https';
 
 const server = express();
 
 const channelNameRegex = /"owner":{"videoOwnerRenderer":{"thumbnail":{"thumbnails":\[.*?\]},"title":{"runs":\[{"text":"(.+?)"/;
-const streamUrlRegex = /(?<=hlsManifestUrl":").*\.m3u8/;
+const streamUrlRegex = /(?<=hlsManifestUrl":").*?\.m3u8/;
 const channelLogoRegex = /(?<=owner":{"videoOwnerRenderer":{"thumbnail":{"thumbnails":\[{"url":")[^=]*/;
-
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -23,7 +24,6 @@ const __dirname = path.dirname(__filename);
 const CACHE_TTL = 300;
 const DEFAULT_PORT = 8080;
 const CONFIG_FILE_PATH = path.join(__dirname, 'config', 'channels.json');
-
 
 let channelConfig = {};
 
@@ -76,6 +76,21 @@ async function fetchStreamData(targetUrl) {
   return streamData;
 }
 
+function proxyStream(url, res) {
+  https.get(url, (streamRes) => {
+    res.writeHead(streamRes.statusCode, streamRes.headers);
+    pipeline(streamRes, res, (err) => {
+      if (err) {
+        console.error('Stream pipeline error:', err);
+        res.sendStatus(500);
+      }
+    });
+  }).on('error', (err) => {
+    console.error('Proxy stream error:', err);
+    res.sendStatus(500);
+  });
+}
+
 function configureServerMiddlewares() {
   server.use(expressStatusMonitor());
   server.use(corsMiddleware());
@@ -83,12 +98,12 @@ function configureServerMiddlewares() {
   server.use(compressResponses());
   server.use(handleServerErrors);
   server.use(morgan('combined'));
-  server.use(async(req, res, next) => {
+  server.use(async (req, res, next) => {
     if (Object.keys(channelConfig).length === 0) {
       await loadChannelConfig();
     }
     next();
-  })
+  });
 }
 
 function handleServerErrors(error, req, res, next) {
@@ -111,7 +126,11 @@ async function handleChannelRequest(req, res, next) {
     const channelUrl = `https://www.youtube.com/channel/${req.params.id}/live`;
     const { stream } = await fetchStreamData(channelUrl);
 
-    stream ? res.redirect(stream) : res.sendStatus(204);
+    if (stream) {
+      proxyStream(stream, res);
+    } else {
+      res.sendStatus(204);
+    }
   } catch (error) {
     next(error);
   }
@@ -122,7 +141,11 @@ async function handleVideoRequest(req, res, next) {
     const videoUrl = `https://www.youtube.com/watch?v=${req.params.id}`;
     const { stream } = await fetchStreamData(videoUrl);
 
-    stream ? res.redirect(stream) : res.sendStatus(204);
+    if (stream) {
+      proxyStream(stream, res);
+    } else {
+      res.sendStatus(204);
+    }
   } catch (error) {
     next(error);
   }
@@ -153,7 +176,6 @@ async function handleCacheRequest(req, res, next) {
 configureServerMiddlewares();
 initializeRoutes();
 
-const port = process.env.PORT || DEFAULT_PORT;
 server.get('/channels', (req, res) => {
   const channels = Object.entries(channelConfig).map(([slug, config]) => ({
     slug,
@@ -163,7 +185,7 @@ server.get('/channels', (req, res) => {
   res.json(channels);
 });
 
-
+const port = process.env.PORT || DEFAULT_PORT;
 server.listen(port, () => {
   console.log(`Stream server operational on port ${port} (Node ${process.version})`);
 });
