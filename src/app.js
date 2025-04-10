@@ -115,7 +115,7 @@ function initializeRoutes() {
   server.get('/health', (req, res) => {
     res.json({ status: 'operational', timestamp: new Date().toISOString() });
   });
-
+   
   server.get('/channel/:id.m3u8', corsMiddleware(), handleChannelRequest);
   server.get('/live/:id.m3u8', corsMiddleware(), handleVideoRequest);
   server.get('/cache', corsMiddleware(), handleCacheRequest);
