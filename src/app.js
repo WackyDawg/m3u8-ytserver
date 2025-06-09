@@ -1,9 +1,9 @@
-import express from 'express';
-import fetch from 'node-fetch';
-import cors from 'cors';
-import helmet from 'helmet';
-import { spawn } from 'child_process';
-import cache from './cache.js';
+const express = require('express');
+const fetch = require('node-fetch');
+const cors = require('cors');
+const helmet = require('helmet');
+const { spawn } = require('child_process');
+const cache = require('./cache');
 
 const app = express();
 
@@ -54,7 +54,6 @@ const streamWithFFmpeg = (streamUrl, req, res) => {
     '-i', streamUrl,
     '-c', 'copy',
     '-f', 'mpegts',
-    '-preset', 'ultrafast',
     'pipe:1'
   ]);
 
