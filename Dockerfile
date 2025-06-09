@@ -1,27 +1,38 @@
-# Use official Node.js Alpine image
-FROM node:20-alpine
+# Use official Ubuntu as base image
+FROM ubuntu:22.04
 
-# Install FFmpeg, Python3, pip, and yt-dlp (with certs)
-RUN apk add --no-cache \
-    python3 \
-    py3-pip \
-    ffmpeg \
-    ca-certificates \
-  && update-ca-certificates \
-  && python3 -m pip install --no-cache-dir --upgrade pip yt-dlp
+# Install dependencies
+RUN apt-get update && apt-get install -y \
+  curl \
+  wget \
+  gnupg \
+  ca-certificates \
+  ffmpeg \
+  python3 \
+  python3-pip \
+  git \
+  && rm -rf /var/lib/apt/lists/*
+
+# Upgrade pip and install yt-dlp
+RUN python3 -m pip install --upgrade pip yt-dlp
+
+# Install Node.js 20
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+  && apt-get update && apt-get install -y nodejs \
+  && node -v && npm -v
 
 # Set working directory
 WORKDIR /usr/src/app
 
-# Copy package files and install npm dependencies
+# Copy package files and install dependencies
 COPY package*.json ./
 RUN npm install
 
-# Copy application source
+# Copy the rest of the app
 COPY . .
 
-# Expose port
+# Expose the port your app runs on
 EXPOSE 3000
 
-# Start the application
+# Run the application
 CMD ["npm", "run", "start"]
