@@ -1,8 +1,9 @@
-const express = require('express');
-const fetch = require('node-fetch');
-const cors = require('cors');
-const helmet = require('helmet');
-const cache = require('./cache');
+import express from 'express';
+import fetch from 'node-fetch';
+import cors from 'cors';
+import helmet from 'helmet';
+import { spawn } from 'child_process';
+import cache from './cache.js';
 
 const app = express();
 
@@ -10,115 +11,114 @@ const reChannelName = /"owner":{"videoOwnerRenderer":{"thumbnail":{"thumbnails":
 
 const getLiveStream = async (url) => {
   let data = await cache?.get(url);
+  if (data) return JSON.parse(data);
 
-  if (data) {
-    return JSON.parse(data);
-  } else {
-    data = {};
-
-    try {
-      const response = await fetch(url, {
-        headers: {
-          'User-Agent': 'VLC/3.0.16 LibVLC/3.0.16',
-          'Referer': 'https://www.youtube.com/',
-          'Origin': 'https://www.youtube.com',
-          'Accept-Language': 'en-US,en;q=0.9'
-        }
-      });
-
-      if (response.ok) {
-        const text = await response.text();
-        const stream = text.match(/(?<=hlsManifestUrl":").*\.m3u8/)?.[0];
-        console.log(`[STREAM URL]`, stream);
-
-        const name = reChannelName.exec(text)?.[1];
-        const logo = text.match(/(?<=owner":{"videoOwnerRenderer":{"thumbnail":{"thumbnails":\[{"url":")[^=]*/)?.[0];
-
-        data = { name, stream, logo };
-      } else {
-        console.log(JSON.stringify({
-          url,
-          status: response.status
-        }));
+  data = {};
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'VLC/3.0.16 LibVLC/3.0.16',
+        'Referer': 'https://www.youtube.com/',
+        'Origin': 'https://www.youtube.com',
+        'Accept-Language': 'en-US,en;q=0.9'
       }
-    } catch (error) {
-      console.log(error);
-    }
+    });
 
-    await cache?.set(url, JSON.stringify(data), { EX: 300 });
-    return data;
+    if (response.ok) {
+      const text = await response.text();
+      const stream = text.match(/(?<=hlsManifestUrl":").*?\.m3u8/)?.[0];
+      const name = reChannelName.exec(text)?.[1];
+      const logo = text.match(/(?<=owner":{"videoOwnerRenderer":{"thumbnail":{"thumbnails":\[{"url":")[^=]*/)?.[0];
+      data = { name, stream, logo };
+    } else {
+      console.log(JSON.stringify({ url, status: response.status }));
+    }
+  } catch (error) {
+    console.log(error);
   }
+
+  await cache?.set(url, JSON.stringify(data), { EX: 300 });
+  return data;
+};
+
+const streamWithFFmpeg = (streamUrl, req, res) => {
+  const headers = [
+    'User-Agent: VLC/3.0.16 LibVLC/3.0.16',
+    'Referer: https://www.youtube.com',
+    'Origin: https://www.youtube.com',
+    'Accept-Language: en-US,en;q=0.9'
+  ].join('\r\n');
+
+  const ffmpeg = spawn('ffmpeg', [
+    '-headers', headers,
+    '-i', streamUrl,
+    '-c', 'copy',
+    '-f', 'mpegts',
+    '-preset', 'ultrafast',
+    'pipe:1'
+  ]);
+
+  res.setHeader('Content-Type', 'video/MP2T');
+  ffmpeg.stdout.pipe(res);
+
+  ffmpeg.stderr.on('data', (data) => {
+    console.error('[FFmpeg stderr]', data.toString());
+  });
+
+  ffmpeg.on('close', (code) => {
+    console.log(`FFmpeg exited with code ${code}`);
+    res.end();
+  });
+
+  req.on('close', () => {
+    ffmpeg.kill('SIGINT');
+  });
 };
 
 app.use(require('express-status-monitor')());
 app.use(cors());
 app.use(helmet());
 
-app.get('/', (req, res, nxt) => {
-  try {
-    res.json({ message: 'Status OK' });
-  } catch (err) {
-    nxt(err);
-  }
+app.get('/', (req, res) => {
+  res.json({ message: 'Status OK' });
 });
 
-app.get('/channel/:id.m3u8', async (req, res, nxt) => {
+app.get(['/channel/:id.m3u8', '/video/:id.m3u8'], async (req, res, next) => {
   try {
-    console.log(`[REQUEST HEADERS - CHANNEL]`, req.headers); // <--- Logs client headers
-    const url = `https://www.youtube.com/channel/${req.params.id}/live`;
+    const isChannel = req.path.includes('/channel/');
+    const id = req.params.id;
+    const url = isChannel
+      ? `https://www.youtube.com/channel/${id}/live`
+      : `https://www.youtube.com/watch?v=${id}`;
+
     const { stream } = await getLiveStream(url);
+    if (!stream) return res.sendStatus(204);
 
-    if (stream) {
-      res.redirect(stream);
-    } else {
-      res.sendStatus(204);
-    }
+    streamWithFFmpeg(stream, req, res);
   } catch (err) {
-    nxt(err);
+    next(err);
   }
 });
 
-app.get('/video/:id.m3u8', async (req, res, nxt) => {
-  try {
-    console.log(`[REQUEST HEADERS - VIDEO]`, req.headers); // <--- Logs client headers
-    const url = `https://www.youtube.com/watch?v=${req.params.id}`;
-    const { stream } = await getLiveStream(url);
-
-    if (stream) {
-      res.redirect(stream);
-    } else {
-      res.sendStatus(204);
-    }
-  } catch (err) {
-    nxt(err);
-  }
-});
-
-app.get('/cache', async (req, res, nxt) => {
+app.get('/cache', async (req, res, next) => {
   try {
     const keys = await cache?.keys('*');
-
     const items = [];
 
     for (const key of keys) {
       const data = JSON.parse(await cache?.get(key));
-
       if (data) {
-        items.push({
-          url: key,
-          name: data.name,
-          logo: data.logo
-        });
+        items.push({ url: key, name: data.name, logo: data.logo });
       }
     }
 
     res.json(items);
   } catch (err) {
-    nxt(err);
+    next(err);
   }
 });
 
 const port = process.env.PORT || 8080;
 app.listen(port, () => {
-  console.log(`express app (node ${process.version}) is running on port ${port}`);
+  console.log(`Express app running on port ${port}`);
 });
