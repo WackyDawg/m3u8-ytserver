@@ -1,14 +1,14 @@
 # Use official Node.js Alpine image
 FROM node:20-alpine
 
-# Install system dependencies: bash, python3, py3-pip, ffmpeg
+# Install FFmpeg, Python3, pip, and yt-dlp (with certs)
 RUN apk add --no-cache \
-  bash \
-  python3 \
-  py3-pip \
-  ffmpeg \
-  && pip install --upgrade pip \
-  && pip install yt-dlp
+    python3 \
+    py3-pip \
+    ffmpeg \
+    ca-certificates \
+  && update-ca-certificates \
+  && python3 -m pip install --no-cache-dir --upgrade pip yt-dlp
 
 # Set working directory
 WORKDIR /usr/src/app
