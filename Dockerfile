@@ -1,20 +1,21 @@
-# Use official Node.js runtime as base image
+# Use official Node.js Alpine image
 FROM node:20-alpine
 
-# Set working directory in container
+# Install FFmpeg and dependencies
+RUN apk add --no-cache ffmpeg
+
+# Set working directory
 WORKDIR /usr/src/app
 
-# Copy package.json and package-lock.json
+# Copy package files and install dependencies
 COPY package*.json ./
-
-# Install dependencies
 RUN npm install
 
-# Copy app source code
+# Copy application source
 COPY . .
 
-# Expose port 3000
+# Expose port
 EXPOSE 3000
 
-# Command to run the app
+# Start the application
 CMD ["npm", "run", "start"]
