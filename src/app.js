@@ -1,69 +1,82 @@
-const express = require('express');
-const { spawn } = require('child_process');
+const ytdl = require('@distube/ytdl-core');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
+const HLSServer = require('hls-server');
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
 
-const app = express();
+ffmpeg.setFfmpegPath(ffmpegInstaller.path);
 
-function streamYouTube(videoUrl, res, req) {
-  // Step 1: Get direct stream URL with yt-dlp
-  const ytDlp = spawn('yt-dlp', ['-g', videoUrl]);
+const outputDir = path.join(__dirname, 'hls-output');
+if (!fs.existsSync(outputDir)) {
+  fs.mkdirSync(outputDir, { recursive: true });
+}
 
-  let streamUrl = '';
+const server = http.createServer();
+const hls = new HLSServer(server, {
+  path: '/streams',
+  dir: outputDir
+});
 
-  ytDlp.stdout.on('data', (data) => {
-    streamUrl += data.toString();
+async function convertToHLS(videoUrl) {
+  if (!ytdl.validateURL(videoUrl)) {
+    throw new Error('Invalid YouTube URL');
+  }
+
+  const videoStream = ytdl(videoUrl, {
+    quality: 'highest',
+    highWaterMark: 1 << 25
   });
 
-  ytDlp.stderr.on('data', (data) => {
-    console.error('yt-dlp error:', data.toString());
-  });
+  const outputPath = path.join(outputDir, 'stream.m3u8');
 
-  ytDlp.on('close', (code) => {
-    if (code !== 0 || !streamUrl) {
-      res.status(500).send('Failed to get stream URL');
-      return;
-    }
-
-    streamUrl = streamUrl.trim();
-    console.log('Stream URL:', streamUrl);
-
-    // Step 2: Use ffmpeg to stream to client
-    const ffmpeg = spawn('ffmpeg', [
-      '-i', streamUrl,
-      '-c', 'copy',
-      '-f', 'mpegts',
-      'pipe:1',
-    ]);
-
-    res.setHeader('Content-Type', 'video/MP2T');
-
-    ffmpeg.stdout.pipe(res);
-
-    ffmpeg.stderr.on('data', (data) => {
-      console.error('FFmpeg error:', data.toString());
-    });
-
-    ffmpeg.on('close', () => {
-      res.end();
-    });
-
-    req.on('close', () => {
-      ffmpeg.kill('SIGINT');
-    });
+  return new Promise((resolve, reject) => {
+    ffmpeg(videoStream)
+      .outputOptions([
+        '-c:v h264',
+        '-c:a aac',
+        '-hls_time 10',
+        '-hls_list_size 0',
+        '-f hls'
+      ])
+      .output(outputPath)
+      .on('end', () => resolve(outputPath))
+      .on('error', reject)
+      .run();
   });
 }
 
-app.get('/', (req, res) => {
-  res.status(200).json({
-    message: "Hello world"
-  })
+// Add root route to serve a simple HTML page
+server.on('request', async (req, res) => {
+  if (req.url === '/') {
+    res.writeHead(200, { 'Content-Type': 'text/html' });
+    res.end(`
+      <h1>YouTube to HLS</h1>
+      <form method="POST" action="/convert">
+        <input name="url" placeholder="YouTube URL" size="40"/>
+        <button type="submit">Convert & Stream</button>
+      </form>
+      <p>Example: <a href="/streams/stream.m3u8">Watch example stream</a></p>
+    `);
+  } else if (req.url === '/convert' && req.method === 'POST') {
+    let body = '';
+    req.on('data', chunk => (body += chunk));
+    req.on('end', async () => {
+      const url = new URLSearchParams(body).get('url');
+      try {
+        await convertToHLS(url);
+        res.writeHead(302, { Location: '/streams/stream.m3u8' });
+        res.end();
+      } catch (err) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Error: ' + err.message);
+      }
+    });
+  }
 });
 
-app.get('/stream/:videoId', (req, res) => {
-  const videoUrl = `https://www.youtube.com/watch?v=${req.params.videoId}`;
-  streamYouTube(videoUrl, res, req);
-});
-
-const port = 3000;
-app.listen(port, () => {
-  console.log(`Listening on http://localhost:${port}`);
+const PORT = 8000;
+server.listen(PORT, () => {
+  console.log(`Server running at http://localhost:${PORT}`);
 });
