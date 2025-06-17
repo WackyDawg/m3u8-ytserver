@@ -1,82 +1,110 @@
-const ytdl = require('@distube/ytdl-core');
-const ffmpeg = require('fluent-ffmpeg');
-const ffmpegInstaller = require('@ffmpeg-installer/ffmpeg');
-const HLSServer = require('hls-server');
-const http = require('http');
-const fs = require('fs');
-const path = require('path');
+const express = require('express')
+const fetch = require('node-fetch')
+const cors = require('cors')
+const helmet = require('helmet')
+const cache = require('./cache')
 
-ffmpeg.setFfmpegPath(ffmpegInstaller.path);
+const app = express()
 
-const outputDir = path.join(__dirname, 'hls-output');
-if (!fs.existsSync(outputDir)) {
-  fs.mkdirSync(outputDir, { recursive: true });
-}
+const reChannelName = /"owner":{"videoOwnerRenderer":{"thumbnail":{"thumbnails":\[.*?\]},"title":{"runs":\[{"text":"(.+?)"/
 
-const server = http.createServer();
-const hls = new HLSServer(server, {
-  path: '/streams',
-  dir: outputDir
-});
+const getLiveStream = async (url) => {
+  let data = await cache?.get(url)
 
-async function convertToHLS(videoUrl) {
-  if (!ytdl.validateURL(videoUrl)) {
-    throw new Error('Invalid YouTube URL');
-  }
+  if (data) {
+    return JSON.parse(data)
+  } else {
+    data = {}
 
-  const videoStream = ytdl(videoUrl, {
-    quality: 'highest',
-    highWaterMark: 1 << 25
-  });
+    try {
+      const response = await fetch(url)
 
-  const outputPath = path.join(outputDir, 'stream.m3u8');
+      if (response.ok) {
+        const text = await response.text()
+        const stream = text.match(/(?<=hlsManifestUrl":").*\.m3u8/)?.[0]
+        const name = reChannelName.exec(text)?.[1]
+        const logo = text.match(/(?<=owner":{"videoOwnerRenderer":{"thumbnail":{"thumbnails":\[{"url":")[^=]*/)?.[0]
 
-  return new Promise((resolve, reject) => {
-    ffmpeg(videoStream)
-      .outputOptions([
-        '-c:v h264',
-        '-c:a aac',
-        '-hls_time 10',
-        '-hls_list_size 0',
-        '-f hls'
-      ])
-      .output(outputPath)
-      .on('end', () => resolve(outputPath))
-      .on('error', reject)
-      .run();
-  });
-}
-
-// Add root route to serve a simple HTML page
-server.on('request', async (req, res) => {
-  if (req.url === '/') {
-    res.writeHead(200, { 'Content-Type': 'text/html' });
-    res.end(`
-      <h1>YouTube to HLS</h1>
-      <form method="POST" action="/convert">
-        <input name="url" placeholder="YouTube URL" size="40"/>
-        <button type="submit">Convert & Stream</button>
-      </form>
-      <p>Example: <a href="/streams/stream.m3u8">Watch example stream</a></p>
-    `);
-  } else if (req.url === '/convert' && req.method === 'POST') {
-    let body = '';
-    req.on('data', chunk => (body += chunk));
-    req.on('end', async () => {
-      const url = new URLSearchParams(body).get('url');
-      try {
-        await convertToHLS(url);
-        res.writeHead(302, { Location: '/streams/stream.m3u8' });
-        res.end();
-      } catch (err) {
-        res.writeHead(500, { 'Content-Type': 'text/plain' });
-        res.end('Error: ' + err.message);
+        data = { name, stream, logo }
+      } else {
+        console.log(JSON.stringify({
+          url,
+          status: response.status
+        }))
       }
-    });
-  }
-});
+    } catch (error) {
+      console.log(error)
+    }
 
-const PORT = 8000;
-server.listen(PORT, () => {
-  console.log(`Server running at http://localhost:${PORT}`);
-});
+    await cache?.set(url, JSON.stringify(data), { EX: 300 })
+
+    return data
+  }
+}
+
+app.use(require('express-status-monitor')())
+app.use(cors());
+app.use(helmet());
+
+app.get('/', (req, res, nxt) => {
+  try {
+    res.json({ message: 'Status OK' })
+  } catch (err) {
+    nxt(err)
+  }
+})
+
+app.get('/channel/:id.m3u8', async (req, res, nxt) => {
+  try {
+    const url = `https://www.youtube.com/channel/${req.params.id}/live`
+    const { stream } = await getLiveStream(url)
+
+    if (stream) {
+      res.redirect(stream)
+    } else {
+      res.sendStatus(204)
+    }
+  } catch (err) { nxt(err) }
+})
+
+app.get('/video/:id.m3u8', async (req, res, nxt) => {
+  try {
+    const url = `https://www.youtube.com/watch?v=${req.params.id}`
+    const { stream } = await getLiveStream(url)
+
+    if (stream) {
+      res.redirect(stream)
+    } else {
+      res.sendStatus(204)
+    }
+  } catch (err) { nxt(err) }
+})
+
+app.get('/cache', async (req, res, nxt) => {
+  try {
+    const keys = await cache?.keys('*')
+
+    const items = []
+
+    for (const key of keys) {
+      const data = JSON.parse(await cache?.get(key))
+
+      if (data) {
+        items.push({
+          url: key,
+          name: data.name,
+          logo: data.logo
+        })
+      }
+    }
+
+    res.json(items)
+  } catch (err) { nxt(err) }
+})
+
+const port = process.env.PORT || 8080
+
+
+app.listen(port, () => {
+  console.log(`express app (node ${process.version}) is running on port ${port}`)
+})
